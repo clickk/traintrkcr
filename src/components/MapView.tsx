@@ -459,7 +459,9 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
   }
 
   return (
-    <div className="relative h-[500px] lg:h-[600px] rounded-xl overflow-hidden border border-[var(--color-border)]">
+    <div className="flex flex-col lg:flex-row h-[500px] lg:h-[600px] rounded-xl overflow-hidden border border-[var(--color-border)]">
+      {/* Map — 70% on desktop, full on mobile */}
+      <div className="relative flex-1 lg:w-[70%] h-full">
       <MC
         center={[CORRIDOR_CENTER.lat, CORRIDOR_CENTER.lng]}
         zoom={14}
@@ -746,8 +748,80 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
         </div>
       </div>
 
-      {/* Sidebar: trains in corridor */}
-      <div className="absolute top-4 right-4 z-[1000] w-72 max-h-[calc(100%-2rem)] overflow-y-auto bg-[var(--color-surface)]/90 backdrop-blur-sm border border-[var(--color-border)] rounded-lg">
+      </div>{/* end map wrapper */}
+
+      {/* Sidebar — 30% on desktop, hidden on mobile (shown as overlay on small screens) */}
+      <div className="hidden lg:flex lg:w-[30%] flex-col h-full overflow-y-auto bg-[var(--color-surface)] border-l border-[var(--color-border)]">
+        <div className="px-4 py-3 border-b border-[var(--color-border)] shrink-0">
+          <div className="text-sm font-semibold">
+            In Corridor ({estimatedPositions.length})
+          </div>
+        </div>
+        <div className="flex-1 overflow-y-auto p-3 space-y-1">
+          {estimatedPositions.length === 0 ? (
+            <div className="text-xs text-[var(--color-text-muted)] text-center py-6 italic">
+              No trains in corridor right now
+            </div>
+          ) : (
+            estimatedPositions.map((ep) => {
+              const vp = ep.movement.vehiclePosition;
+              return (
+                <button
+                  key={ep.movement.id}
+                  onClick={() => onSelectMovement(ep.movement)}
+                  className="w-full text-left px-3 py-2.5 rounded-lg hover:bg-[var(--color-surface-2)] transition-colors border border-transparent hover:border-[var(--color-border)]"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-sm">
+                      {ep.movement.direction === "towards-newcastle" ? "⬆" : "⬇"}
+                    </span>
+                    <span className="text-sm font-mono font-bold tabular-nums">
+                      {formatTime(
+                        ep.movement.estimatedTime || ep.movement.scheduledTime
+                      )}
+                    </span>
+                    <span className="text-xs truncate text-[var(--color-text-muted)] flex-1">
+                      {ep.movement.destination}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 ml-6 mt-1">
+                    <span className="text-[11px] text-[var(--color-text-muted)]">
+                      {ep.isLive ? "● Live" : "◌ Est"} · {ep.movement.operator}
+                    </span>
+                    {ep.speedKmh !== null && (
+                      <span className="text-[11px] font-mono text-emerald-400">
+                        {ep.speedKmh}km/h
+                      </span>
+                    )}
+                  </div>
+                  {vp?.consistLength && (
+                    <div className="flex items-center gap-2 ml-6 mt-0.5">
+                      <span className="text-[11px] text-blue-400 font-medium">
+                        {vp.consistLength}-car
+                      </span>
+                      {vp.carNumbers && vp.carNumbers.length <= 6 && (
+                        <span className="text-[10px] font-mono text-[var(--color-text-muted)]">
+                          [{vp.carNumbers.slice(0, 3).join("·")}{vp.carNumbers.length > 3 ? "…" : ""}]
+                        </span>
+                      )}
+                    </div>
+                  )}
+                  {ep.movement.delayMinutes != null && ep.movement.delayMinutes > 0 && (
+                    <div className="ml-6 mt-0.5">
+                      <span className="text-[11px] text-amber-400 font-medium">
+                        +{ep.movement.delayMinutes} min late
+                      </span>
+                    </div>
+                  )}
+                </button>
+              );
+            })
+          )}
+        </div>
+      </div>
+
+      {/* Mobile-only overlay sidebar (small screens) */}
+      <div className="lg:hidden absolute top-4 right-4 z-[1000] w-64 max-h-[calc(100%-2rem)] overflow-y-auto bg-[var(--color-surface)]/90 backdrop-blur-sm border border-[var(--color-border)] rounded-lg">
         <div className="px-3 py-2 border-b border-[var(--color-border)]">
           <div className="text-xs font-medium">
             In Corridor ({estimatedPositions.length})
@@ -759,52 +833,27 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
               No trains in corridor right now
             </div>
           ) : (
-            estimatedPositions.map((ep) => {
-              const vp = ep.movement.vehiclePosition;
-              return (
-                <button
-                  key={ep.movement.id}
-                  onClick={() => onSelectMovement(ep.movement)}
-                  className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors"
-                >
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs">
-                      {ep.movement.direction === "towards-newcastle" ? "⬆" : "⬇"}
-                    </span>
-                    <span className="text-xs font-mono font-bold tabular-nums">
-                      {formatTime(
-                        ep.movement.estimatedTime || ep.movement.scheduledTime
-                      )}
-                    </span>
-                    <span className="text-[11px] truncate text-[var(--color-text-muted)]">
-                      {ep.movement.destination}
-                    </span>
-                  </div>
-                  <div className="flex items-center gap-2 ml-5 mt-0.5">
-                    <span className="text-[10px] text-[var(--color-text-muted)]">
-                      {ep.isLive ? "● Live" : "◌ Est"} · {ep.movement.operator}
-                    </span>
-                    {ep.speedKmh !== null && (
-                      <span className="text-[10px] font-mono text-emerald-400">
-                        {ep.speedKmh}km/h
-                      </span>
+            estimatedPositions.map((ep) => (
+              <button
+                key={ep.movement.id}
+                onClick={() => onSelectMovement(ep.movement)}
+                className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors"
+              >
+                <div className="flex items-center gap-2">
+                  <span className="text-xs">
+                    {ep.movement.direction === "towards-newcastle" ? "⬆" : "⬇"}
+                  </span>
+                  <span className="text-xs font-mono font-bold tabular-nums">
+                    {formatTime(
+                      ep.movement.estimatedTime || ep.movement.scheduledTime
                     )}
-                  </div>
-                  {vp?.consistLength && (
-                    <div className="flex items-center gap-2 ml-5 mt-0.5">
-                      <span className="text-[10px] text-blue-400 font-medium">
-                        {vp.consistLength}-car
-                      </span>
-                      {vp.carNumbers && vp.carNumbers.length <= 6 && (
-                        <span className="text-[9px] font-mono text-[var(--color-text-muted)]">
-                          [{vp.carNumbers.slice(0, 3).join("·")}{vp.carNumbers.length > 3 ? "…" : ""}]
-                        </span>
-                      )}
-                    </div>
-                  )}
-                </button>
-              );
-            })
+                  </span>
+                  <span className="text-[11px] truncate text-[var(--color-text-muted)]">
+                    {ep.movement.destination}
+                  </span>
+                </div>
+              </button>
+            ))
           )}
         </div>
       </div>
