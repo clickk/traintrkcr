@@ -10,19 +10,19 @@ import { Station } from "./types";
 export const CARDIFF: Station = {
   id: "cardiff",
   name: "Cardiff",
-  lat: -32.9432879,
-  lng: 151.6681841,
-  stopIds: ["225521"],
-  platformIds: ["225521"],
+  lat: -32.9418238759,
+  lng: 151.662980082,
+  stopIds: ["228520", "2285361", "2285362"],
+  platformIds: ["2285361", "2285362"],
 };
 
 export const KOTARA: Station = {
   id: "kotara",
   name: "Kotara",
-  lat: -32.9424125,
-  lng: 151.6950622,
-  stopIds: ["225421"],
-  platformIds: ["225421"],
+  lat: -32.9413962736,
+  lng: 151.69849332,
+  stopIds: ["228910", "2289341", "2289342"],
+  platformIds: ["2289341", "2289342"],
 };
 
 export const CORRIDOR_STATIONS: Station[] = [CARDIFF, KOTARA];

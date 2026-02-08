@@ -5,7 +5,7 @@
  * into a unified movement list for the Cardiff–Kotara corridor.
  */
 
-import { getScheduledMovements } from "./tfnsw/gtfs-static";
+import { getScheduledMovementsAsync } from "./tfnsw/gtfs-static";
 import {
   processTripUpdates,
   processVehiclePositions,
@@ -119,14 +119,14 @@ export async function getCorridorMovements(
   let fallbackActive = false;
   let fallbackReason: string | undefined;
 
-  // 1. Get scheduled passenger movements
-  const scheduledMovements = getScheduledMovements(from, to);
+  // 1. Get scheduled passenger movements (async — fetches real GTFS data)
+  const scheduledMovements = await getScheduledMovementsAsync(from, to);
   feeds.push({
     name: "GTFS Static Schedule",
     source: "tfnsw-gtfs-static",
-    status: "online",
+    status: scheduledMovements.length > 0 ? "online" : "degraded",
     lastFetched: now.toISOString(),
-    lastSuccessful: now.toISOString(),
+    lastSuccessful: scheduledMovements.length > 0 ? now.toISOString() : undefined,
     recordCount: scheduledMovements.length,
   });
 
