@@ -3,11 +3,12 @@
 import { useEffect, useState, useRef, useCallback } from "react";
 import type { Movement } from "@/lib/types";
 import { format } from "date-fns";
-import { CORRIDOR_CENTER } from "@/lib/stations";
+import { CORRIDOR_CENTER, WATCH_POINT } from "@/lib/stations";
 import {
   RAIL_PATH,
   CARDIFF_TRACK_POS,
   KOTARA_TRACK_POS,
+  WATCH_POINT_TRACK_POS,
   CARDIFF_DISTANCE,
   KOTARA_DISTANCE,
   TOTAL_PATH_LENGTH,
@@ -301,6 +302,28 @@ function MapViewInner({ movements, onSelectMovement }: MapViewProps) {
           </PP>
         </CM>
 
+        {/* User watch point */}
+        <CM
+          center={WATCH_POINT_TRACK_POS}
+          radius={8}
+          pathOptions={{
+            fillColor: "#f97316",
+            fillOpacity: 0.9,
+            color: "#fdba74",
+            weight: 3,
+          }}
+        >
+          <PP>
+            <div className="text-gray-900">
+              <strong>📍 My Location</strong>
+              <br />
+              <span className="text-xs">
+                32°56&apos;38.6&quot;S 151°41&apos;30.9&quot;E
+              </span>
+            </div>
+          </PP>
+        </CM>
+
         {/* Train positions — live + estimated */}
         {estimatedPositions.map((ep) => (
           <CM
@@ -363,6 +386,10 @@ function MapViewInner({ movements, onSelectMovement }: MapViewProps) {
           <div className="flex items-center gap-2 text-xs">
             <span className="w-2.5 h-2.5 rounded-full bg-green-500" />
             Kotara Station
+          </div>
+          <div className="flex items-center gap-2 text-xs">
+            <span className="w-2.5 h-2.5 rounded-full bg-orange-500" />
+            My Location
           </div>
           <div className="flex items-center gap-2 text-xs">
             <span

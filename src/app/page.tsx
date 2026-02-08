@@ -3,6 +3,7 @@
 import { useState, useCallback } from "react";
 import type { Movement, MovementFilters } from "@/lib/types";
 import { useMovements } from "@/hooks/useMovements";
+import { useNotifications } from "@/hooks/useNotifications";
 import FilterBar from "@/components/FilterBar";
 import StatusBanner from "@/components/StatusBanner";
 import LiveBoard from "@/components/LiveBoard";
@@ -36,6 +37,8 @@ export default function Home() {
 
   const { data, loading, error, lastRefresh, refresh } =
     useMovements(filters);
+
+  const notifications = useNotifications(data?.movements || []);
 
   const handleSelectMovement = useCallback((movement: Movement) => {
     setSelectedMovement(movement);
@@ -92,9 +95,43 @@ export default function Home() {
           ))}
         </nav>
 
-        {/* Clock */}
-        <div className="hidden md:block text-right">
-          <LiveClock />
+        {/* Alert Controls + Clock */}
+        <div className="flex items-center gap-3">
+          {/* Push notification toggle */}
+          <button
+            onClick={notifications.togglePush}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+              notifications.pushEnabled
+                ? "bg-orange-500/20 border-orange-500/40 text-orange-400"
+                : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]"
+            }`}
+            title="Push notifications — alert 1 min before train passes your location"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 17h5l-1.405-1.405A2.032 2.032 0 0118 14.158V11a6.002 6.002 0 00-4-5.659V5a2 2 0 10-4 0v.341C7.67 6.165 6 8.388 6 11v3.159c0 .538-.214 1.055-.595 1.436L4 17h5m6 0v1a3 3 0 11-6 0v-1m6 0H9" />
+            </svg>
+            <span className="hidden sm:inline">Alerts</span>
+          </button>
+
+          {/* Sound mode toggle */}
+          <button
+            onClick={notifications.toggleSound}
+            className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium transition-colors border ${
+              notifications.soundEnabled
+                ? "bg-blue-500/20 border-blue-500/40 text-blue-400"
+                : "bg-[var(--color-surface-2)] border-[var(--color-border)] text-[var(--color-text-muted)]"
+            }`}
+            title="Sound mode — audio announcement 1 min before train passes"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15.536 8.464a5 5 0 010 7.072M12 6.253v11.494m0 0A8.001 8.001 0 014 12m8 5.747A8.001 8.001 0 0020 12M9.879 16.121A3 3 0 1012.015 8" />
+            </svg>
+            <span className="hidden sm:inline">Sound</span>
+          </button>
+
+          <div className="hidden md:block text-right">
+            <LiveClock />
+          </div>
         </div>
       </header>
 

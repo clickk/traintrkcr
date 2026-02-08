@@ -1,0 +1,16 @@
+{
+  "name": "TRAINTRCKR",
+  "short_name": "TRAINTRCKR",
+  "description": "Cardiff–Kotara corridor train tracker",
+  "start_url": "/",
+  "display": "standalone",
+  "background_color": "#0a0e17",
+  "theme_color": "#3b82f6",
+  "icons": [
+    {
+      "src": "/train-icon.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    }
+  ]
+}

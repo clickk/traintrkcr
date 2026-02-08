@@ -3,6 +3,7 @@
 import { format } from "date-fns";
 import type { Movement } from "@/lib/types";
 import ConfidenceBadge from "./ConfidenceBadge";
+import { getConsistInfo } from "@/lib/consist-images";
 
 interface MovementDetailsProps {
   movement: Movement;
@@ -73,6 +74,28 @@ export default function MovementDetails({
             <DetailField label="Operator" value={movement.operator} />
             <DetailField label="Consist Type" value={movement.consistType || "Unknown"} />
           </div>
+
+          {/* Consist Photo */}
+          {(() => {
+            const info = getConsistInfo(movement.consistType);
+            if (!info) return null;
+            return (
+              <div className="rounded-xl overflow-hidden border border-[var(--color-border)]">
+                <img
+                  src={info.imageUrl}
+                  alt={info.name}
+                  className="w-full h-40 object-cover"
+                  loading="lazy"
+                />
+                <div className="flex items-center justify-between px-3 py-2 bg-[var(--color-surface-2)]">
+                  <span className="text-sm font-medium">{info.name}</span>
+                  <span className="text-[10px] text-[var(--color-text-muted)]">
+                    {info.attribution}
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Origin / Destination */}
           <div className="flex items-center gap-3 px-4 py-3 bg-[var(--color-surface-2)] rounded-xl">
