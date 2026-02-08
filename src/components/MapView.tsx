@@ -26,6 +26,58 @@ let CircleMarker: typeof import("react-leaflet").CircleMarker | null = null;
 interface MapViewProps {
   movements: Movement[];
   onSelectMovement: (movement: Movement) => void;
+  showWeather?: boolean;
+}
+
+// ─── RainViewer radar hook ──────────────────────────────────────────────────
+
+interface RadarFrame {
+  path: string;
+  time: number;
+}
+
+function useRainRadar(enabled: boolean) {
+  const [radarUrl, setRadarUrl] = useState<string | null>(null);
+  const [radarTime, setRadarTime] = useState<string | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      setRadarUrl(null);
+      setRadarTime(null);
+      return;
+    }
+
+    async function fetchRadar() {
+      try {
+        const res = await fetch("https://api.rainviewer.com/public/weather-maps.json");
+        if (!res.ok) return;
+        const data = await res.json();
+        const host: string = data.host || "https://tilecache.rainviewer.com";
+        const frames: RadarFrame[] = data.radar?.past || [];
+        if (frames.length === 0) return;
+        const latest = frames[frames.length - 1];
+        // Tile URL: {host}{path}/{size}/{z}/{x}/{y}/{color}/{options}.png
+        // color=6 (original), options=1_1 (smooth + snow)
+        const url = `${host}${latest.path}/256/{z}/{x}/{y}/6/1_1.png`;
+        setRadarUrl(url);
+        setRadarTime(
+          new Date(latest.time * 1000).toLocaleTimeString("en-AU", {
+            timeZone: "Australia/Sydney",
+            hour: "2-digit",
+            minute: "2-digit",
+          })
+        );
+      } catch {
+        // Silently fail — radar is non-critical
+      }
+    }
+
+    fetchRadar();
+    const interval = setInterval(fetchRadar, 5 * 60 * 1000); // Refresh every 5 min
+    return () => clearInterval(interval);
+  }, [enabled]);
+
+  return { radarUrl, radarTime };
 }
 
 function formatTime(isoString?: string): string {
@@ -158,8 +210,10 @@ function useAnimatedPositions(movements: Movement[]): EstimatedPosition[] {
 
 // ─── Map Component ──────────────────────────────────────────────────────────
 
-function MapViewInner({ movements, onSelectMovement }: MapViewProps) {
+function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapViewProps) {
   const [leafletReady, setLeafletReady] = useState(false);
+  const [weatherOn, setWeatherOn] = useState(showWeather);
+  const { radarUrl, radarTime } = useRainRadar(weatherOn);
   const estimatedPositions = useAnimatedPositions(movements);
 
   useEffect(() => {
@@ -232,6 +286,16 @@ function MapViewInner({ movements, onSelectMovement }: MapViewProps) {
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>'
           url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
         />
+
+        {/* Rain radar overlay */}
+        {weatherOn && radarUrl && (
+          <TL
+            url={radarUrl}
+            attribution='<a href="https://www.rainviewer.com/">RainViewer</a>'
+            opacity={0.45}
+            zIndex={400}
+          />
+        )}
 
         {/* Real rail corridor geometry */}
         <PL
@@ -373,6 +437,25 @@ function MapViewInner({ movements, onSelectMovement }: MapViewProps) {
         ))}
       </MC>
 
+      {/* Weather toggle */}
+      <button
+        onClick={() => setWeatherOn((w) => !w)}
+        className={`absolute top-4 left-4 z-[1000] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+          weatherOn
+            ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-400"
+            : "bg-[var(--color-surface)]/90 border-[var(--color-border)] text-[var(--color-text-muted)]"
+        } backdrop-blur-sm`}
+        title="Toggle rain radar overlay"
+      >
+        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+        </svg>
+        Rain
+        {weatherOn && radarTime && (
+          <span className="text-[10px] text-cyan-300/70">{radarTime}</span>
+        )}
+      </button>
+
       {/* Legend */}
       <div className="absolute bottom-4 left-4 z-[1000] bg-[var(--color-surface)]/90 backdrop-blur-sm border border-[var(--color-border)] rounded-lg px-3 py-2">
         <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium mb-1.5">
@@ -413,6 +496,12 @@ function MapViewInner({ movements, onSelectMovement }: MapViewProps) {
             <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
             Delayed
           </div>
+          {weatherOn && (
+            <div className="flex items-center gap-2 text-xs text-cyan-400">
+              <span className="w-2.5 h-2.5 rounded-sm bg-cyan-500/40" />
+              Rain Radar
+            </div>
+          )}
         </div>
       </div>
 
@@ -463,7 +552,7 @@ function MapViewInner({ movements, onSelectMovement }: MapViewProps) {
 }
 
 // SSR wrapper
-export default function MapView(props: MapViewProps) {
+export default function MapView(props: MapViewProps & { showWeather?: boolean }) {
   const [isClient, setIsClient] = useState(false);
 
   useEffect(() => {

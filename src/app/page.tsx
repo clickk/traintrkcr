@@ -11,13 +11,17 @@ import CorridorView from "@/components/CorridorView";
 import MapView from "@/components/MapView";
 import MovementDetails from "@/components/MovementDetails";
 import FeedStatusPanel from "@/components/FeedStatusPanel";
+import NextTrainWidget from "@/components/NextTrainWidget";
+import ETACountdown from "@/components/ETACountdown";
+import AnalyticsDashboard from "@/components/AnalyticsDashboard";
 
-type ViewTab = "live-board" | "corridor" | "map";
+type ViewTab = "live-board" | "corridor" | "map" | "analytics";
 
 const TAB_CONFIG: { id: ViewTab; label: string; icon: string }[] = [
   { id: "live-board", label: "Live Board", icon: "📋" },
   { id: "corridor", label: "Corridor", icon: "🛤️" },
   { id: "map", label: "Map", icon: "🗺️" },
+  { id: "analytics", label: "Analytics", icon: "📊" },
 ];
 
 const DEFAULT_FILTERS: MovementFilters = {
@@ -135,6 +139,11 @@ export default function Home() {
         </div>
       </header>
 
+      {/* Next Train Sticky Widget */}
+      {data && (
+        <NextTrainWidget movements={data.movements} />
+      )}
+
       {/* Filters */}
       <FilterBar
         filters={filters}
@@ -191,10 +200,13 @@ export default function Home() {
         {data && (
           <>
             {activeTab === "live-board" && (
-              <LiveBoard
-                movements={data.movements}
-                onSelectMovement={handleSelectMovement}
-              />
+              <>
+                <ETACountdown movements={data.movements} />
+                <LiveBoard
+                  movements={data.movements}
+                  onSelectMovement={handleSelectMovement}
+                />
+              </>
             )}
             {activeTab === "corridor" && (
               <CorridorView
@@ -209,6 +221,9 @@ export default function Home() {
                   onSelectMovement={handleSelectMovement}
                 />
               </div>
+            )}
+            {activeTab === "analytics" && (
+              <AnalyticsDashboard />
             )}
           </>
         )}
