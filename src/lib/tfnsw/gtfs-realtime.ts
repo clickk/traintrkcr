@@ -154,6 +154,12 @@ export async function processVehiclePositions(): Promise<VehiclePositionResult> 
 
     const timestamp = toLong(vp.timestamp);
 
+    // Extract vehicle descriptor data
+    const rawVehicleId = vp.vehicle?.id ?? undefined;
+    const vehicleLabel = vp.vehicle?.label ?? undefined;
+    const carNumbers = rawVehicleId ? rawVehicleId.split(".") : undefined;
+    const consistLength = carNumbers ? carNumbers.length : undefined;
+
     positions.set(vp.trip.tripId, {
       lat: vp.position.latitude,
       lng: vp.position.longitude,
@@ -163,6 +169,11 @@ export async function processVehiclePositions(): Promise<VehiclePositionResult> 
         ? new Date(timestamp * 1000).toISOString()
         : new Date().toISOString(),
       source: "tfnsw-gtfs-rt-vehicle-positions",
+      vehicleId: rawVehicleId,
+      vehicleLabel,
+      carNumbers,
+      consistLength,
+      occupancyStatus: vp.occupancyStatus ?? undefined,
     });
   }
 

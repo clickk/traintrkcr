@@ -14,13 +14,15 @@ import FeedStatusPanel from "@/components/FeedStatusPanel";
 import NextTrainWidget from "@/components/NextTrainWidget";
 import ETACountdown from "@/components/ETACountdown";
 import AnalyticsDashboard from "@/components/AnalyticsDashboard";
+import SpotterLog from "@/components/SpotterLog";
 
-type ViewTab = "live-board" | "corridor" | "map" | "analytics";
+type ViewTab = "live-board" | "corridor" | "map" | "analytics" | "spotter";
 
 const TAB_CONFIG: { id: ViewTab; label: string; icon: string }[] = [
   { id: "live-board", label: "Live Board", icon: "📋" },
   { id: "corridor", label: "Corridor", icon: "🛤️" },
   { id: "map", label: "Map", icon: "🗺️" },
+  { id: "spotter", label: "Spotter", icon: "📷" },
   { id: "analytics", label: "Analytics", icon: "📊" },
 ];
 
@@ -221,6 +223,9 @@ export default function Home() {
                   onSelectMovement={handleSelectMovement}
                 />
               </div>
+            )}
+            {activeTab === "spotter" && (
+              <SpotterLog movements={data.movements} />
             )}
             {activeTab === "analytics" && (
               <AnalyticsDashboard filters={filters} />

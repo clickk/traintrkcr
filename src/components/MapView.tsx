@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useRef, useCallback } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import type { Movement } from "@/lib/types";
 import { format } from "date-fns";
 import { CORRIDOR_CENTER, WATCH_POINT } from "@/lib/stations";
@@ -13,7 +13,12 @@ import {
   KOTARA_DISTANCE,
   TOTAL_PATH_LENGTH,
   interpolateOnPath,
+  getBearingAtT,
+  getBearingAtPosition,
+  estimateSpeed,
 } from "@/lib/rail-geometry";
+import { getSunPosition, type SunInfo } from "@/lib/sun-position";
+import { useWeather, windDirectionLabel, type WeatherData } from "@/hooks/useWeather";
 
 // Dynamic import for Leaflet (SSR-incompatible)
 let L: typeof import("leaflet") | null = null;
@@ -22,6 +27,7 @@ let TileLayer: typeof import("react-leaflet").TileLayer | null = null;
 let Popup: typeof import("react-leaflet").Popup | null = null;
 let Polyline: typeof import("react-leaflet").Polyline | null = null;
 let CircleMarker: typeof import("react-leaflet").CircleMarker | null = null;
+let Marker: typeof import("react-leaflet").Marker | null = null;
 
 interface MapViewProps {
   movements: Movement[];
@@ -56,8 +62,6 @@ function useRainRadar(enabled: boolean) {
         const frames: RadarFrame[] = data.radar?.past || [];
         if (frames.length === 0) return;
         const latest = frames[frames.length - 1];
-        // Tile URL: {host}{path}/{size}/{z}/{x}/{y}/{color}/{options}.png
-        // color=6 (original), options=1_1 (smooth + snow)
         const url = `${host}${latest.path}/256/{z}/{x}/{y}/6/1_1.png`;
         setRadarUrl(url);
         setRadarTime(
@@ -73,7 +77,7 @@ function useRainRadar(enabled: boolean) {
     }
 
     fetchRadar();
-    const interval = setInterval(fetchRadar, 5 * 60 * 1000); // Refresh every 5 min
+    const interval = setInterval(fetchRadar, 5 * 60 * 1000);
     return () => clearInterval(interval);
   }, [enabled]);
 
@@ -113,21 +117,17 @@ function estimatePositionT(movement: Movement, now: number): number | null {
 
   const isTowardsNewcastle = movement.direction === "towards-newcastle";
 
-  // For towards-newcastle: Cardiff first (south), then Kotara (north)
-  // For towards-sydney: Kotara first (north), then Cardiff (south)
   const entryTime = isTowardsNewcastle ? cardiffTime : kotaraTime;
   const exitTime = isTowardsNewcastle ? kotaraTime : cardiffTime;
   const entryDist = isTowardsNewcastle ? CARDIFF_DISTANCE : KOTARA_DISTANCE;
   const exitDist = isTowardsNewcastle ? KOTARA_DISTANCE : CARDIFF_DISTANCE;
 
-  // Approach/departure padding: ~3 min before entry, ~3 min after exit
   const APPROACH_MS = 3 * 60 * 1000;
   const approachStart = entryTime - APPROACH_MS;
   const departureEnd = exitTime + APPROACH_MS;
 
   if (now < approachStart || now > departureEnd) return null;
 
-  // Approaching station
   if (now < entryTime) {
     const approachProgress = (now - approachStart) / APPROACH_MS;
     const approachStartDist = isTowardsNewcastle ? 0 : TOTAL_PATH_LENGTH;
@@ -136,7 +136,6 @@ function estimatePositionT(movement: Movement, now: number): number | null {
     return dist / TOTAL_PATH_LENGTH;
   }
 
-  // Between stations
   if (now <= exitTime) {
     const corridorProgress =
       exitTime === entryTime
@@ -146,7 +145,6 @@ function estimatePositionT(movement: Movement, now: number): number | null {
     return dist / TOTAL_PATH_LENGTH;
   }
 
-  // Departing
   const departProgress = (now - exitTime) / APPROACH_MS;
   const departEndDist = isTowardsNewcastle ? TOTAL_PATH_LENGTH : 0;
   const dist = exitDist + (departEndDist - exitDist) * departProgress;
@@ -160,7 +158,13 @@ interface EstimatedPosition {
   lat: number;
   lng: number;
   isLive: boolean;
+  bearing: number;
+  speedKmh: number | null;
+  tValue: number | null; // normalised track position
 }
+
+// Store previous positions for speed calculation
+const prevPositions = new Map<string, { lat: number; lng: number; time: number }>();
 
 function useAnimatedPositions(movements: Movement[]): EstimatedPosition[] {
   const [positions, setPositions] = useState<EstimatedPosition[]>([]);
@@ -175,11 +179,36 @@ function useAnimatedPositions(movements: Movement[]): EstimatedPosition[] {
 
       // Real GTFS-RT vehicle position takes priority
       if (m.vehiclePosition) {
+        const bearing = getBearingAtPosition(
+          m.vehiclePosition.lat,
+          m.vehiclePosition.lng,
+          m.direction
+        );
+
+        // Speed from position change
+        let speedKmh: number | null = m.vehiclePosition.estimatedSpeedKmh ?? null;
+        const prev = prevPositions.get(m.id);
+        if (prev && now - prev.time > 5000) {
+          const est = estimateSpeed(
+            prev.lat, prev.lng, prev.time,
+            m.vehiclePosition.lat, m.vehiclePosition.lng, now
+          );
+          if (est > 0 && est < 200) speedKmh = est;
+        }
+        prevPositions.set(m.id, {
+          lat: m.vehiclePosition.lat,
+          lng: m.vehiclePosition.lng,
+          time: now,
+        });
+
         result.push({
           movement: m,
           lat: m.vehiclePosition.lat,
           lng: m.vehiclePosition.lng,
           isLive: true,
+          bearing,
+          speedKmh,
+          tValue: null,
         });
         continue;
       }
@@ -188,7 +217,18 @@ function useAnimatedPositions(movements: Movement[]): EstimatedPosition[] {
       const t = estimatePositionT(m, now);
       if (t !== null) {
         const [lat, lng] = interpolateOnPath(t);
-        result.push({ movement: m, lat, lng, isLive: false });
+        const bearing = getBearingAtT(t, m.direction);
+
+        // Speed from estimated position changes
+        let speedKmh: number | null = null;
+        const prev = prevPositions.get(m.id);
+        if (prev && now - prev.time > 2000) {
+          const est = estimateSpeed(prev.lat, prev.lng, prev.time, lat, lng, now);
+          if (est > 0 && est < 200) speedKmh = est;
+        }
+        prevPositions.set(m.id, { lat, lng, time: now });
+
+        result.push({ movement: m, lat, lng, isLive: false, bearing, speedKmh, tValue: t });
       }
     }
 
@@ -208,13 +248,154 @@ function useAnimatedPositions(movements: Movement[]): EstimatedPosition[] {
   return positions;
 }
 
+// ─── Arrow icon factory ─────────────────────────────────────────────────────
+
+function createArrowIcon(
+  color: string,
+  bearing: number,
+  isLive: boolean,
+  isFreight: boolean,
+  consistLength?: number
+): import("leaflet").DivIcon | null {
+  if (!L) return null;
+
+  const size = isFreight ? 28 : 24;
+  const borderColor = isLive ? "#ffffff" : "#94a3b8";
+  const borderWidth = isLive ? 2 : 1.5;
+  const dashStyle = isLive ? "" : "stroke-dasharray: 3 2;";
+
+  // Small label for consist length
+  const lengthLabel = consistLength
+    ? `<text x="${size / 2}" y="${size / 2 + 1}" text-anchor="middle" dominant-baseline="middle" fill="white" font-size="8" font-weight="bold" font-family="monospace">${consistLength}</text>`
+    : "";
+
+  const html = `
+    <div style="transform: rotate(${bearing}deg); width: ${size}px; height: ${size}px;">
+      <svg viewBox="0 0 ${size} ${size}" width="${size}" height="${size}">
+        <polygon
+          points="${size / 2},2 ${size - 3},${size - 4} ${size / 2},${size - 8} 3,${size - 4}"
+          fill="${color}" fill-opacity="0.95"
+          stroke="${borderColor}" stroke-width="${borderWidth}"
+          ${dashStyle ? `style="${dashStyle}"` : ""}
+        />
+        ${lengthLabel}
+      </svg>
+    </div>
+  `;
+
+  return L.divIcon({
+    html,
+    className: "train-arrow-marker",
+    iconSize: [size, size],
+    iconAnchor: [size / 2, size / 2],
+  });
+}
+
+// ─── Weather/Sun Panel ──────────────────────────────────────────────────────
+
+function WeatherSunPanel({
+  weather,
+  sunInfo,
+}: {
+  weather: WeatherData | null;
+  sunInfo: SunInfo;
+}) {
+  if (!weather) return null;
+
+  const sunIcon = sunInfo.isUp
+    ? sunInfo.goldenHour
+      ? "🌅"
+      : "☀️"
+    : sunInfo.blueHour
+      ? "🌆"
+      : "🌙";
+
+  const lightColor =
+    sunInfo.newcastleSideLight === "good" || sunInfo.sydneySideLight === "good"
+      ? "text-green-400"
+      : sunInfo.newcastleSideLight === "ok" || sunInfo.sydneySideLight === "ok"
+        ? "text-yellow-400"
+        : "text-red-400";
+
+  return (
+    <div className="absolute top-14 left-4 z-[1000] bg-[var(--color-surface)]/90 backdrop-blur-sm border border-[var(--color-border)] rounded-lg px-3 py-2 space-y-1.5 max-w-[200px]">
+      <div className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium">
+        Conditions
+      </div>
+
+      {/* Weather */}
+      <div className="flex items-center gap-2 text-xs">
+        <span className="text-base">{weatherIcon(weather.weatherCode)}</span>
+        <div>
+          <span className="font-semibold">{weather.temperature}°C</span>
+          <span className="text-[var(--color-text-muted)]"> feels {weather.feelsLike}°</span>
+        </div>
+      </div>
+      <div className="text-[11px] text-[var(--color-text-muted)]">
+        {weather.description}
+      </div>
+      <div className="flex gap-3 text-[11px] text-[var(--color-text-muted)]">
+        <span>💨 {weather.windSpeed}km/h {windDirectionLabel(weather.windDirection)}</span>
+      </div>
+      <div className="flex gap-3 text-[11px] text-[var(--color-text-muted)]">
+        <span>☁️ {weather.cloudCover}%</span>
+        <span>👁 {weather.visibility.toFixed(0)}km</span>
+      </div>
+
+      {/* Sun position */}
+      <div className="border-t border-[var(--color-border)] pt-1.5 mt-1.5">
+        <div className="flex items-center gap-2 text-xs">
+          <span className="text-base">{sunIcon}</span>
+          <div>
+            <span className="font-semibold">{sunInfo.elevation}°</span>
+            <span className="text-[var(--color-text-muted)]"> elev · {sunInfo.azimuth}° az</span>
+          </div>
+        </div>
+        <div className={`text-[11px] mt-0.5 ${lightColor}`}>
+          {sunInfo.recommendation}
+        </div>
+        <div className="flex gap-2 text-[10px] text-[var(--color-text-muted)] mt-0.5">
+          <span>↑N: {sunInfo.newcastleSideLight}</span>
+          <span>↓S: {sunInfo.sydneySideLight}</span>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function weatherIcon(code: number): string {
+  if (code === 0 || code === 1) return "☀️";
+  if (code === 2) return "⛅";
+  if (code === 3) return "☁️";
+  if (code >= 45 && code <= 48) return "🌫️";
+  if (code >= 51 && code <= 55) return "🌦️";
+  if (code >= 61 && code <= 65) return "🌧️";
+  if (code >= 80 && code <= 82) return "🌧️";
+  if (code >= 71 && code <= 77) return "❄️";
+  if (code >= 95) return "⛈️";
+  return "🌤️";
+}
+
 // ─── Map Component ──────────────────────────────────────────────────────────
 
 function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapViewProps) {
   const [leafletReady, setLeafletReady] = useState(false);
   const [weatherOn, setWeatherOn] = useState(showWeather);
+  const [conditionsOn, setConditionsOn] = useState(true);
   const { radarUrl, radarTime } = useRainRadar(weatherOn);
+  const { weather } = useWeather();
   const estimatedPositions = useAnimatedPositions(movements);
+
+  // Sun position — updates every minute
+  const [sunInfo, setSunInfo] = useState<SunInfo>(() =>
+    getSunPosition(WATCH_POINT.lat, WATCH_POINT.lng)
+  );
+  useEffect(() => {
+    const update = () => setSunInfo(getSunPosition(WATCH_POINT.lat, WATCH_POINT.lng));
+    update();
+    const interval = setInterval(update, 60_000);
+    return () => clearInterval(interval);
+  }, []);
 
   useEffect(() => {
     async function loadLeaflet() {
@@ -227,6 +408,7 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
         Popup = rl.Popup;
         Polyline = rl.Polyline;
         CircleMarker = rl.CircleMarker;
+        Marker = rl.Marker;
 
         delete (L.Icon.Default.prototype as any)._getIconUrl;
         L.Icon.Default.mergeOptions({
@@ -252,7 +434,8 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
     !TileLayer ||
     !CircleMarker ||
     !Polyline ||
-    !Popup
+    !Popup ||
+    !Marker
   ) {
     return (
       <div className="flex items-center justify-center h-[500px] bg-[var(--color-surface)]">
@@ -266,6 +449,7 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
   const CM = CircleMarker;
   const PL = Polyline;
   const PP = Popup;
+  const MK = Marker;
 
   function trainColor(m: Movement, isLive: boolean): string {
     if (m.serviceType === "freight") return "#a855f7";
@@ -379,82 +563,137 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
         >
           <PP>
             <div className="text-gray-900">
-              <strong>📍 My Location</strong>
+              <strong>My Location</strong>
               <br />
               <span className="text-xs">
-                32°56&apos;38.6&quot;S 151°41&apos;30.9&quot;E
+                32&deg;56&apos;38.6&quot;S 151&deg;41&apos;30.9&quot;E
               </span>
             </div>
           </PP>
         </CM>
 
-        {/* Train positions — live + estimated */}
-        {estimatedPositions.map((ep) => (
-          <CM
-            key={ep.movement.id}
-            center={[ep.lat, ep.lng]}
-            radius={ep.isLive ? 7 : 6}
-            pathOptions={{
-              fillColor: trainColor(ep.movement, ep.isLive),
-              fillOpacity: 0.95,
-              color: ep.isLive ? "#ffffff" : "#94a3b8",
-              weight: ep.isLive ? 2.5 : 1.5,
-              dashArray: ep.isLive ? undefined : "3 2",
-            }}
-            eventHandlers={{
-              click: () => onSelectMovement(ep.movement),
-            }}
-          >
-            <PP>
-              <div className="text-gray-900 min-w-[200px]">
-                <strong>
-                  {ep.movement.serviceType === "freight" ? "🚂" : "🚆"}{" "}
-                  {ep.movement.runId || ep.movement.tripId}
-                </strong>
-                <br />
-                <span className="text-xs">
-                  {ep.movement.direction === "towards-newcastle" ? "↑" : "↓"}{" "}
-                  {ep.movement.destination}
-                </span>
-                <br />
-                <span className="text-xs">{ep.movement.operator}</span>
-                {ep.movement.delayMinutes != null &&
-                  ep.movement.delayMinutes > 0 && (
+        {/* Train positions — arrow markers with direction */}
+        {estimatedPositions.map((ep) => {
+          const icon = createArrowIcon(
+            trainColor(ep.movement, ep.isLive),
+            ep.bearing,
+            ep.isLive,
+            ep.movement.serviceType === "freight",
+            ep.movement.vehiclePosition?.consistLength
+          );
+          if (!icon) return null;
+
+          const vp = ep.movement.vehiclePosition;
+          const setId = vp?.carNumbers
+            ? vp.carNumbers.length <= 4
+              ? vp.carNumbers.join("·")
+              : `${vp.carNumbers[0]}·${vp.carNumbers[1]}...${vp.carNumbers[vp.carNumbers.length - 1]}`
+            : null;
+
+          return (
+            <MK
+              key={ep.movement.id}
+              position={[ep.lat, ep.lng]}
+              icon={icon}
+              eventHandlers={{
+                click: () => onSelectMovement(ep.movement),
+              }}
+            >
+              <PP>
+                <div className="text-gray-900 min-w-[220px]">
+                  <div className="flex items-center justify-between mb-1">
+                    <strong>
+                      {ep.movement.serviceType === "freight" ? "🚂" : "🚆"}{" "}
+                      {ep.movement.runId || ep.movement.tripId?.substring(0, 12)}
+                    </strong>
+                    {ep.speedKmh !== null && (
+                      <span className="text-xs font-mono bg-gray-100 px-1.5 py-0.5 rounded">
+                        {ep.speedKmh} km/h
+                      </span>
+                    )}
+                  </div>
+                  <span className="text-xs">
+                    {ep.movement.direction === "towards-newcastle" ? "⬆ Northbound" : "⬇ Southbound"}{" "}
+                    · {ep.movement.destination}
+                  </span>
+                  <br />
+                  <span className="text-xs">{ep.movement.operator}</span>
+                  {vp?.consistLength && (
                     <>
                       <br />
-                      <span className="text-xs text-amber-600 font-semibold">
-                        +{ep.movement.delayMinutes} min late
+                      <span className="text-xs font-medium">
+                        {vp.consistLength}-car consist
                       </span>
                     </>
                   )}
-                <br />
-                <span className="text-[10px] text-gray-500 italic">
-                  {ep.isLive ? "Live GPS position" : "Estimated from timetable"}
-                </span>
-              </div>
-            </PP>
-          </CM>
-        ))}
+                  {setId && (
+                    <>
+                      <br />
+                      <span className="text-[10px] text-gray-600 font-mono">
+                        Cars: {setId}
+                      </span>
+                    </>
+                  )}
+                  {ep.movement.delayMinutes != null &&
+                    ep.movement.delayMinutes > 0 && (
+                      <>
+                        <br />
+                        <span className="text-xs text-amber-600 font-semibold">
+                          +{ep.movement.delayMinutes} min late
+                        </span>
+                      </>
+                    )}
+                  <br />
+                  <span className="text-[10px] text-gray-500 italic">
+                    {ep.isLive ? "Live GPS position" : "Estimated from timetable"}
+                  </span>
+                </div>
+              </PP>
+            </MK>
+          );
+        })}
       </MC>
 
-      {/* Weather toggle */}
-      <button
-        onClick={() => setWeatherOn((w) => !w)}
-        className={`absolute top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
-          weatherOn
-            ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-400"
-            : "bg-[var(--color-surface)]/90 border-[var(--color-border)] text-[var(--color-text-muted)]"
-        } backdrop-blur-sm`}
-        title="Toggle rain radar overlay"
-      >
-        <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
-        </svg>
-        Rain
-        {weatherOn && radarTime && (
-          <span className="text-[10px] text-cyan-300/70">{radarTime}</span>
-        )}
-      </button>
+      {/* Top controls row */}
+      <div className="absolute top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-2">
+        {/* Rain toggle */}
+        <button
+          onClick={() => setWeatherOn((w) => !w)}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            weatherOn
+              ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-400"
+              : "bg-[var(--color-surface)]/90 border-[var(--color-border)] text-[var(--color-text-muted)]"
+          } backdrop-blur-sm`}
+          title="Toggle rain radar overlay"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M3 15a4 4 0 004 4h9a5 5 0 10-.1-9.999 5.002 5.002 0 10-9.78 2.096A4.001 4.001 0 003 15z" />
+          </svg>
+          Rain
+          {weatherOn && radarTime && (
+            <span className="text-[10px] text-cyan-300/70">{radarTime}</span>
+          )}
+        </button>
+
+        {/* Conditions toggle */}
+        <button
+          onClick={() => setConditionsOn((c) => !c)}
+          className={`flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+            conditionsOn
+              ? "bg-amber-500/20 border-amber-500/40 text-amber-400"
+              : "bg-[var(--color-surface)]/90 border-[var(--color-border)] text-[var(--color-text-muted)]"
+          } backdrop-blur-sm`}
+          title="Toggle weather & sun conditions"
+        >
+          <svg className="w-3.5 h-3.5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 3v1m0 16v1m9-9h-1M4 12H3m15.364 6.364l-.707-.707M6.343 6.343l-.707-.707m12.728 0l-.707.707M6.343 17.657l-.707.707M16 12a4 4 0 11-8 0 4 4 0 018 0z" />
+          </svg>
+          Photo
+        </button>
+      </div>
+
+      {/* Weather & Sun Panel */}
+      {conditionsOn && <WeatherSunPanel weather={weather} sunInfo={sunInfo} />}
 
       {/* Legend */}
       <div className="absolute bottom-4 left-4 z-[1000] bg-[var(--color-surface)]/90 backdrop-blur-sm border border-[var(--color-border)] rounded-lg px-3 py-2">
@@ -475,25 +714,27 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
             My Location
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span
-              className="w-2.5 h-2.5 rounded-full bg-green-400"
-              style={{ border: "2px solid #fff" }}
-            />
-            Live GPS
+            <svg className="w-3.5 h-3.5" viewBox="0 0 14 14">
+              <polygon points="7,1 12,11 7,8 2,11" fill="#22c55e" stroke="#fff" strokeWidth="1.5" />
+            </svg>
+            Live GPS (arrow = direction)
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span
-              className="w-2.5 h-2.5 rounded-full bg-blue-400"
-              style={{ border: "1.5px dashed #94a3b8" }}
-            />
+            <svg className="w-3.5 h-3.5" viewBox="0 0 14 14">
+              <polygon points="7,1 12,11 7,8 2,11" fill="#60a5fa" stroke="#94a3b8" strokeWidth="1" strokeDasharray="2 1" />
+            </svg>
             Estimated
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span className="w-2.5 h-2.5 rounded-full bg-purple-500" />
+            <svg className="w-3.5 h-3.5" viewBox="0 0 14 14">
+              <polygon points="7,1 12,11 7,8 2,11" fill="#a855f7" stroke="#fff" strokeWidth="1" />
+            </svg>
             Freight
           </div>
           <div className="flex items-center gap-2 text-xs">
-            <span className="w-2.5 h-2.5 rounded-full bg-amber-400" />
+            <svg className="w-3.5 h-3.5" viewBox="0 0 14 14">
+              <polygon points="7,1 12,11 7,8 2,11" fill="#f59e0b" stroke="#fff" strokeWidth="1" />
+            </svg>
             Delayed
           </div>
           {weatherOn && (
@@ -506,7 +747,7 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
       </div>
 
       {/* Sidebar: trains in corridor */}
-      <div className="absolute top-4 right-4 z-[1000] w-64 max-h-[calc(100%-2rem)] overflow-y-auto bg-[var(--color-surface)]/90 backdrop-blur-sm border border-[var(--color-border)] rounded-lg">
+      <div className="absolute top-4 right-4 z-[1000] w-72 max-h-[calc(100%-2rem)] overflow-y-auto bg-[var(--color-surface)]/90 backdrop-blur-sm border border-[var(--color-border)] rounded-lg">
         <div className="px-3 py-2 border-b border-[var(--color-border)]">
           <div className="text-xs font-medium">
             In Corridor ({estimatedPositions.length})
@@ -518,32 +759,52 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
               No trains in corridor right now
             </div>
           ) : (
-            estimatedPositions.map((ep) => (
-              <button
-                key={ep.movement.id}
-                onClick={() => onSelectMovement(ep.movement)}
-                className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors"
-              >
-                <div className="flex items-center gap-2">
-                  <span className="text-xs">
-                    {ep.movement.serviceType === "freight" ? "🚂" : "🚆"}
-                  </span>
-                  <span className="text-xs font-mono font-bold tabular-nums">
-                    {formatTime(
-                      ep.movement.estimatedTime || ep.movement.scheduledTime
+            estimatedPositions.map((ep) => {
+              const vp = ep.movement.vehiclePosition;
+              return (
+                <button
+                  key={ep.movement.id}
+                  onClick={() => onSelectMovement(ep.movement)}
+                  className="w-full text-left px-2 py-1.5 rounded-md hover:bg-[var(--color-surface-2)] transition-colors"
+                >
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs">
+                      {ep.movement.direction === "towards-newcastle" ? "⬆" : "⬇"}
+                    </span>
+                    <span className="text-xs font-mono font-bold tabular-nums">
+                      {formatTime(
+                        ep.movement.estimatedTime || ep.movement.scheduledTime
+                      )}
+                    </span>
+                    <span className="text-[11px] truncate text-[var(--color-text-muted)]">
+                      {ep.movement.destination}
+                    </span>
+                  </div>
+                  <div className="flex items-center gap-2 ml-5 mt-0.5">
+                    <span className="text-[10px] text-[var(--color-text-muted)]">
+                      {ep.isLive ? "● Live" : "◌ Est"} · {ep.movement.operator}
+                    </span>
+                    {ep.speedKmh !== null && (
+                      <span className="text-[10px] font-mono text-emerald-400">
+                        {ep.speedKmh}km/h
+                      </span>
                     )}
-                  </span>
-                  <span className="text-[11px] truncate text-[var(--color-text-muted)]">
-                    {ep.movement.direction === "towards-newcastle" ? "↑" : "↓"}{" "}
-                    {ep.movement.destination}
-                  </span>
-                </div>
-                <div className="text-[10px] text-[var(--color-text-muted)] ml-5 mt-0.5">
-                  {ep.isLive ? "● Live" : "◌ Estimated"} ·{" "}
-                  {ep.movement.operator}
-                </div>
-              </button>
-            ))
+                  </div>
+                  {vp?.consistLength && (
+                    <div className="flex items-center gap-2 ml-5 mt-0.5">
+                      <span className="text-[10px] text-blue-400 font-medium">
+                        {vp.consistLength}-car
+                      </span>
+                      {vp.carNumbers && vp.carNumbers.length <= 6 && (
+                        <span className="text-[9px] font-mono text-[var(--color-text-muted)]">
+                          [{vp.carNumbers.slice(0, 3).join("·")}{vp.carNumbers.length > 3 ? "…" : ""}]
+                        </span>
+                      )}
+                    </div>
+                  )}
+                </button>
+              );
+            })
           )}
         </div>
       </div>

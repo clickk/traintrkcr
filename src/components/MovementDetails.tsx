@@ -149,41 +149,73 @@ export default function MovementDetails({
             </div>
           </div>
 
-          {/* Vehicle Position */}
+          {/* Vehicle / Consist Info */}
           {movement.vehiclePosition && (
             <div>
               <h3 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-medium mb-2">
-                Live Vehicle Position
+                Live Vehicle Data
               </h3>
-              <div className="grid grid-cols-2 gap-2 px-3 py-2.5 bg-[var(--color-surface-2)] rounded-lg">
-                <DetailField
-                  label="Latitude"
-                  value={movement.vehiclePosition.lat.toFixed(6)}
-                />
-                <DetailField
-                  label="Longitude"
-                  value={movement.vehiclePosition.lng.toFixed(6)}
-                />
-                {movement.vehiclePosition.speed != null && (
-                  <DetailField
-                    label="Speed"
-                    value={`${Math.round(movement.vehiclePosition.speed * 3.6)} km/h`}
-                  />
+              <div className="space-y-2">
+                {/* Consist details */}
+                {movement.vehiclePosition.consistLength && (
+                  <div className="px-3 py-2.5 bg-blue-500/10 border border-blue-500/20 rounded-lg">
+                    <div className="flex items-center justify-between">
+                      <span className="text-sm font-medium text-blue-400">
+                        {movement.vehiclePosition.consistLength}-car consist
+                      </span>
+                      {movement.vehiclePosition.occupancyStatus != null && (
+                        <span className="text-xs px-2 py-0.5 rounded-full bg-[var(--color-surface-2)]">
+                          {occupancyLabel(movement.vehiclePosition.occupancyStatus)}
+                        </span>
+                      )}
+                    </div>
+                    {movement.vehiclePosition.carNumbers && (
+                      <div className="mt-1.5 flex flex-wrap gap-1">
+                        {movement.vehiclePosition.carNumbers.map((car, i) => (
+                          <span
+                            key={i}
+                            className="text-[10px] font-mono px-1.5 py-0.5 bg-[var(--color-surface)] rounded border border-[var(--color-border)]"
+                          >
+                            {car}
+                          </span>
+                        ))}
+                      </div>
+                    )}
+                  </div>
                 )}
-                {movement.vehiclePosition.bearing != null && (
+
+                {/* Position grid */}
+                <div className="grid grid-cols-2 gap-2 px-3 py-2.5 bg-[var(--color-surface-2)] rounded-lg">
                   <DetailField
-                    label="Bearing"
-                    value={`${Math.round(movement.vehiclePosition.bearing)}°`}
+                    label="Latitude"
+                    value={movement.vehiclePosition.lat.toFixed(6)}
                   />
-                )}
-                <DetailField
-                  label="Position Timestamp"
-                  value={formatDateTime(movement.vehiclePosition.timestamp)}
-                />
-                <DetailField
-                  label="Source"
-                  value={movement.vehiclePosition.source}
-                />
+                  <DetailField
+                    label="Longitude"
+                    value={movement.vehiclePosition.lng.toFixed(6)}
+                  />
+                  {movement.vehiclePosition.estimatedSpeedKmh != null && (
+                    <DetailField
+                      label="Est. Speed"
+                      value={`${movement.vehiclePosition.estimatedSpeedKmh} km/h`}
+                    />
+                  )}
+                  {movement.vehiclePosition.bearing != null &&
+                    movement.vehiclePosition.bearing !== 0 && (
+                    <DetailField
+                      label="Bearing"
+                      value={`${Math.round(movement.vehiclePosition.bearing)}°`}
+                    />
+                  )}
+                  <DetailField
+                    label="Position Timestamp"
+                    value={formatDateTime(movement.vehiclePosition.timestamp)}
+                  />
+                  <DetailField
+                    label="Source"
+                    value={movement.vehiclePosition.source}
+                  />
+                </div>
               </div>
             </div>
           )}
@@ -223,6 +255,18 @@ export default function MovementDetails({
       </div>
     </div>
   );
+}
+
+function occupancyLabel(status: number): string {
+  switch (status) {
+    case 0: return "Empty";
+    case 1: return "Many seats";
+    case 2: return "Few seats";
+    case 3: return "Standing only";
+    case 4: return "Crushed";
+    case 5: return "Full";
+    default: return "Unknown";
+  }
 }
 
 function DetailField({ label, value }: { label: string; value: string }) {

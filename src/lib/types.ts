@@ -72,6 +72,12 @@ export interface VehiclePosition {
   speed?: number;
   timestamp: string;
   source: DataSource;
+  vehicleId?: string;       // Raw dot-separated car numbers
+  vehicleLabel?: string;    // e.g. "20:18 Central to Newcastle"
+  carNumbers?: string[];    // Individual car numbers
+  consistLength?: number;   // Number of cars (4, 6, 8, 10)
+  occupancyStatus?: number; // 0=empty, 1=many seats, 2=few seats, 3=standing only
+  estimatedSpeedKmh?: number; // Computed from geometry
 }
 
 // ─── Movement ───────────────────────────────────────────────────────────────

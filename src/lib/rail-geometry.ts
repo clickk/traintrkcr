@@ -371,3 +371,88 @@ export function interpolateOnPath(t: number): [number, number] {
   }
   return RAIL_PATH[RAIL_PATH.length - 1];
 }
+
+/**
+ * Get the bearing of the track at a given normalised position.
+ * Returns degrees from north (0=N, 90=E, 180=S, 270=W).
+ *
+ * @param t — normalised 0..1
+ * @param direction — "towards-newcastle" (south→north) or "towards-sydney" (north→south)
+ */
+export function getBearingAtT(
+  t: number,
+  direction: "towards-newcastle" | "towards-sydney"
+): number {
+  const clamped = Math.max(0, Math.min(1, t));
+  const target = clamped * TOTAL_PATH_LENGTH;
+
+  // Find the segment
+  let segIdx = RAIL_PATH.length - 2;
+  for (let i = 1; i < CUMULATIVE.length; i++) {
+    if (CUMULATIVE[i] >= target) {
+      segIdx = i - 1;
+      break;
+    }
+  }
+
+  const [lat1, lng1] = RAIL_PATH[segIdx];
+  const [lat2, lng2] = RAIL_PATH[Math.min(segIdx + 1, RAIL_PATH.length - 1)];
+
+  // Compute bearing using atan2
+  const dLng = (lng2 - lng1) * Math.cos(((lat1 + lat2) / 2) * (Math.PI / 180));
+  const dLat = lat2 - lat1;
+  let bearing = Math.atan2(dLng, dLat) * (180 / Math.PI);
+
+  // RAIL_PATH runs south → north, so the raw bearing is "towards-newcastle"
+  // For towards-sydney, flip 180°
+  if (direction === "towards-sydney") {
+    bearing += 180;
+  }
+
+  return ((bearing % 360) + 360) % 360;
+}
+
+/**
+ * Get the bearing at a lat/lng by finding the nearest segment.
+ */
+export function getBearingAtPosition(
+  lat: number,
+  lng: number,
+  direction: "towards-newcastle" | "towards-sydney"
+): number {
+  const idx = findNearest(lat, lng);
+  const t = CUMULATIVE[idx] / TOTAL_PATH_LENGTH;
+  return getBearingAtT(t, direction);
+}
+
+/**
+ * Approximate real-world distance in km for two lat/lng points.
+ * Uses the haversine formula.
+ */
+export function haversineKm(
+  lat1: number, lng1: number,
+  lat2: number, lng2: number
+): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLng = (lng2 - lng1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) *
+    Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/**
+ * Estimate speed in km/h between two positions and timestamps.
+ */
+export function estimateSpeed(
+  lat1: number, lng1: number, time1: number,
+  lat2: number, lng2: number, time2: number
+): number {
+  const distKm = haversineKm(lat1, lng1, lat2, lng2);
+  const dtHours = Math.abs(time2 - time1) / (1000 * 3600);
+  if (dtHours < 0.00001) return 0;
+  return Math.round(distKm / dtHours);
+}
