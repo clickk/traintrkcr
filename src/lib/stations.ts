@@ -15,8 +15,8 @@ import { Station } from "./types";
 export const CARDIFF: Station = {
   id: "cardiff",
   name: "Cardiff",
-  lat: -32.9467,
-  lng: 151.6681,
+  lat: -32.9432879,           // On-track position from OSM
+  lng: 151.6681841,
   stopIds: ["225521"],         // Parent station stop_id
   platformIds: ["225521"],     // Platform stop_ids
 };
@@ -24,8 +24,8 @@ export const CARDIFF: Station = {
 export const KOTARA: Station = {
   id: "kotara",
   name: "Kotara",
-  lat: -32.9397,
-  lng: 151.6878,
+  lat: -32.9445870,           // On-track position from OSM
+  lng: 151.6884115,
   stopIds: ["225421"],         // Parent station stop_id
   platformIds: ["225421"],     // Platform stop_ids
 };
