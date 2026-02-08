@@ -404,6 +404,25 @@ export async function getScheduledMovementsAsync(
       const nextDayMovements = buildMovementsFromGTFS(cachedSchedule, nextDayStart);
       movements = [...movements, ...nextDayMovements];
     }
+
+    // If the GTFS data has no services for today (calendar doesn't cover
+    // this date — common when TfNSW publishes the next week's schedule
+    // before the current week ends), try re-fetching once to see if a
+    // newer ZIP is available. If still no luck, fall back to the
+    // hardcoded timetable so the app isn't empty.
+    if (movements.length === 0) {
+      console.warn("[GTFS] No services found for today — re-fetching ZIP in case a newer one is available");
+      const reParsed = await fetchAndParseGTFS();
+      if (reParsed) {
+        cachedSchedule = reParsed;
+        movements = buildMovementsFromGTFS(reParsed, dayStart);
+      }
+
+      if (movements.length === 0) {
+        console.warn("[GTFS] Still no services after re-fetch — using fallback schedule");
+        movements = generateFallbackSchedule(from, to);
+      }
+    }
   } else {
     // Fallback to hardcoded schedule
     console.warn("[GTFS] Using fallback hardcoded schedule");
