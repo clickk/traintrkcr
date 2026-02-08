@@ -52,15 +52,42 @@ function createBeepSequence(ctx: AudioContext) {
 function speak(text: string) {
   if (!("speechSynthesis" in window)) return;
   const utterance = new SpeechSynthesisUtterance(text);
-  utterance.rate = 1.1;
-  utterance.pitch = 1.0;
+  utterance.rate = 1.0;
+  utterance.pitch = 1.1;
   utterance.volume = 1.0;
-  // Try to use an Australian English voice
+
+  // Prefer a natural female voice — prioritise by quality
   const voices = speechSynthesis.getVoices();
-  const auVoice = voices.find(
+
+  // 1. Best: premium/enhanced female AU voices (Safari/macOS "Karen", iOS "Catherine")
+  const premiumFemaleAU = voices.find(
+    (v) =>
+      (v.lang === "en-AU" || v.lang.startsWith("en-AU")) &&
+      /karen|catherine|matilda|nicole/i.test(v.name)
+  );
+
+  // 2. Good: any female-named AU voice
+  const femaleAU = voices.find(
+    (v) =>
+      (v.lang === "en-AU" || v.lang.startsWith("en-AU")) &&
+      !/daniel|lee|gordon|james|russell/i.test(v.name)
+  );
+
+  // 3. Decent: premium female en-GB or en-US (Samantha, Kate, Serena, Moira)
+  const premiumFemaleEN = voices.find(
+    (v) =>
+      v.lang.startsWith("en") &&
+      /samantha|kate|serena|moira|fiona|martha|zoe|tessa|victoria|allison/i.test(v.name)
+  );
+
+  // 4. Fallback: any AU voice
+  const anyAU = voices.find(
     (v) => v.lang === "en-AU" || v.lang.startsWith("en-AU")
   );
-  if (auVoice) utterance.voice = auVoice;
+
+  utterance.voice =
+    premiumFemaleAU || femaleAU || premiumFemaleEN || anyAU || null;
+
   speechSynthesis.speak(utterance);
 }
 
