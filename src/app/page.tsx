@@ -107,18 +107,6 @@ export default function Home() {
         loading={loading}
       />
 
-      {/* Status Banners */}
-      {data && (
-        <div className="px-4 pt-3">
-          <StatusBanner
-            fallbackActive={data.fallbackActive}
-            fallbackReason={data.fallbackReason}
-            feeds={data.feeds}
-            lastRefresh={lastRefresh}
-          />
-        </div>
-      )}
-
       {/* Main Content */}
       <main className="flex-1">
         {error && !data && (
@@ -188,6 +176,18 @@ export default function Home() {
           </>
         )}
       </main>
+
+      {/* Status Banners — bottom of page */}
+      {data && (
+        <div className="px-4 pb-2">
+          <StatusBanner
+            fallbackActive={data.fallbackActive}
+            fallbackReason={data.fallbackReason}
+            feeds={data.feeds}
+            lastRefresh={lastRefresh}
+          />
+        </div>
+      )}
 
       {/* Feed Status Footer */}
       {data && <FeedStatusPanel feeds={data.feeds} />}
