@@ -1,6 +1,7 @@
 "use client";
 
 import { useState, useEffect } from "react";
+import type { MovementFilters } from "@/lib/types";
 
 // ─── Types (mirrors API route) ──────────────────────────────────────────────
 
@@ -45,15 +46,26 @@ interface AnalyticsResponse {
 
 // ─── Component ──────────────────────────────────────────────────────────────
 
-export default function AnalyticsDashboard() {
+interface AnalyticsDashboardProps {
+  filters: MovementFilters;
+}
+
+export default function AnalyticsDashboard({ filters }: AnalyticsDashboardProps) {
   const [data, setData] = useState<AnalyticsResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
     async function load() {
+      setLoading(true);
       try {
-        const res = await fetch("/api/analytics");
+        const params = new URLSearchParams({
+          station: filters.station,
+          direction: filters.direction,
+          type: filters.type,
+          status: filters.status,
+        });
+        const res = await fetch(`/api/analytics?${params}`);
         if (!res.ok) throw new Error(`API error: ${res.status}`);
         const json: AnalyticsResponse = await res.json();
         setData(json);
@@ -64,7 +76,7 @@ export default function AnalyticsDashboard() {
       }
     }
     load();
-  }, []);
+  }, [filters.station, filters.direction, filters.type, filters.status]);
 
   if (loading) {
     return (
@@ -88,8 +100,31 @@ export default function AnalyticsDashboard() {
 
   const { today, days } = data;
 
+  const activeFilters: string[] = [];
+  if (filters.station !== "both") activeFilters.push(filters.station === "cardiff" ? "Cardiff only" : "Kotara only");
+  if (filters.direction !== "both") activeFilters.push(filters.direction === "towards-newcastle" ? "To Newcastle" : "To Sydney");
+  if (filters.type !== "all") activeFilters.push(filters.type === "passenger" ? "Passenger only" : "Freight only");
+  if (filters.status !== "all") activeFilters.push(filters.status.charAt(0).toUpperCase() + filters.status.slice(1) + " only");
+
   return (
     <div className="p-4 space-y-6 max-w-5xl mx-auto">
+      {/* Active filter badges */}
+      {activeFilters.length > 0 && (
+        <div className="flex items-center gap-2 flex-wrap">
+          <span className="text-[10px] uppercase tracking-wider text-[var(--color-text-muted)] font-medium">
+            Filtered:
+          </span>
+          {activeFilters.map((f) => (
+            <span
+              key={f}
+              className="px-2 py-0.5 bg-[var(--color-accent)]/15 border border-[var(--color-accent)]/30 text-[var(--color-accent)] rounded-full text-[10px] font-medium"
+            >
+              {f}
+            </span>
+          ))}
+        </div>
+      )}
+
       {/* ─── Today's Summary ───────────────────────────────────────────── */}
       <section>
         <h2 className="text-sm font-bold uppercase tracking-wider text-[var(--color-text-muted)] mb-3">

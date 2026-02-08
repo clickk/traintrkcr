@@ -1,6 +1,13 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { getCorridorMovements } from "@/lib/corridor";
-import type { MovementFilters, Movement } from "@/lib/types";
+import type {
+  MovementFilters,
+  Movement,
+  StationFilter,
+  DirectionFilter,
+  TypeFilter,
+  StatusFilter,
+} from "@/lib/types";
 import { subDays, format } from "date-fns";
 
 export const dynamic = "force-dynamic";
@@ -206,15 +213,16 @@ function computeDayStat(movements: Movement[], date: Date): DayStat {
 
 // ─── Route Handler ──────────────────────────────────────────────────────────
 
-export async function GET() {
+export async function GET(request: NextRequest) {
   const now = new Date();
+  const searchParams = request.nextUrl.searchParams;
 
   const todayFilters: MovementFilters = {
-    station: "both",
-    direction: "both",
-    type: "all",
-    status: "all",
-    timeWindow: "today",
+    station: (searchParams.get("station") as StationFilter) || "both",
+    direction: (searchParams.get("direction") as DirectionFilter) || "both",
+    type: (searchParams.get("type") as TypeFilter) || "all",
+    status: (searchParams.get("status") as StatusFilter) || "all",
+    timeWindow: "today", // Analytics always uses full day
   };
 
   try {

@@ -223,7 +223,7 @@ export default function Home() {
               </div>
             )}
             {activeTab === "analytics" && (
-              <AnalyticsDashboard />
+              <AnalyticsDashboard filters={filters} />
             )}
           </>
         )}

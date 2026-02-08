@@ -440,7 +440,7 @@ function MapViewInner({ movements, onSelectMovement, showWeather = false }: MapV
       {/* Weather toggle */}
       <button
         onClick={() => setWeatherOn((w) => !w)}
-        className={`absolute top-4 left-4 z-[1000] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
+        className={`absolute top-4 left-1/2 -translate-x-1/2 z-[1000] flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs font-medium border transition-colors ${
           weatherOn
             ? "bg-cyan-500/20 border-cyan-500/40 text-cyan-400"
             : "bg-[var(--color-surface)]/90 border-[var(--color-border)] text-[var(--color-text-muted)]"
