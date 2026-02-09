@@ -126,3 +126,20 @@ body {
 .network-marker svg {
   filter: drop-shadow(0 1px 3px rgba(0, 0, 0, 0.7));
 }
+
+/* Mini-map live dot */
+.train-live-dot {
+  background: transparent !important;
+  border: none !important;
+}
+
+@keyframes pulse-ring {
+  0% {
+    transform: scale(1);
+    opacity: 0.4;
+  }
+  100% {
+    transform: scale(2.5);
+    opacity: 0;
+  }
+}

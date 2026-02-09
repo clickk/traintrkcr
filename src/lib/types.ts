@@ -115,6 +115,21 @@ export interface Movement {
   delayMinutes?: number;
 }
 
+// ─── Service Alert ──────────────────────────────────────────────────────
+
+export interface ServiceAlert {
+  id: string;
+  cause: string;        // e.g. "MAINTENANCE", "WEATHER", "ACCIDENT", "OTHER_CAUSE"
+  effect: string;       // e.g. "NO_SERVICE", "MODIFIED_SERVICE", "SIGNIFICANT_DELAYS"
+  header: string;       // Short summary
+  description: string;  // Full description
+  routeIds: string[];   // Affected route IDs
+  tripIds: string[];    // Affected trip IDs (if specified)
+  stopIds: string[];    // Affected stop IDs (if specified)
+  activePeriods: { start: string; end?: string }[];
+  isActive: boolean;    // Whether the alert is currently active
+}
+
 // ─── Feed Status ────────────────────────────────────────────────────────────
 
 export interface FeedStatus {
@@ -148,6 +163,7 @@ export interface MovementFilters {
 export interface MovementsResponse {
   movements: Movement[];
   feeds: FeedStatus[];
+  alerts: ServiceAlert[];
   filters: MovementFilters;
   timestamp: string;
   fallbackActive: boolean;

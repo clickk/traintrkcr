@@ -17,6 +17,7 @@ const TFNSW_BASE = "https://api.transport.nsw.gov.au";
 // GTFS-RT endpoints
 const TRIP_UPDATES_URL = `${TFNSW_BASE}/v2/gtfs/realtime/sydneytrains`;
 const VEHICLE_POSITIONS_URL = `${TFNSW_BASE}/v2/gtfs/vehiclepos/sydneytrains`;
+const SERVICE_ALERTS_URL = `${TFNSW_BASE}/v2/gtfs/alerts/sydneytrains`;
 
 // GTFS Static is a ZIP file - we'll use a cached/parsed version
 const GTFS_STATIC_URL = `${TFNSW_BASE}/v1/gtfs/schedule/sydneytrains`;
@@ -157,4 +158,42 @@ export async function fetchGtfsStatic(): Promise<FetchResult<ArrayBuffer>> {
   }
 }
 
-export { TRIP_UPDATES_URL, VEHICLE_POSITIONS_URL, GTFS_STATIC_URL };
+/**
+ * Fetch GTFS-RT Service Alerts feed.
+ */
+export async function fetchServiceAlerts(): Promise<
+  FetchResult<GtfsRealtimeBindings.transit_realtime.FeedMessage>
+> {
+  const timestamp = new Date().toISOString();
+  try {
+    const response = await fetch(SERVICE_ALERTS_URL, {
+      headers: getHeaders(),
+      next: { revalidate: 60 }, // Cache for 60 seconds (alerts change less often)
+    });
+
+    if (!response.ok) {
+      return {
+        data: null,
+        error: `TfNSW Service Alerts returned ${response.status}: ${response.statusText}`,
+        timestamp,
+        status: "error",
+      };
+    }
+
+    const buffer = await response.arrayBuffer();
+    const feed = GtfsRealtimeBindings.transit_realtime.FeedMessage.decode(
+      new Uint8Array(buffer)
+    );
+
+    return { data: feed, timestamp, status: "success" };
+  } catch (err) {
+    return {
+      data: null,
+      error: `Failed to fetch Service Alerts: ${err instanceof Error ? err.message : String(err)}`,
+      timestamp,
+      status: "error",
+    };
+  }
+}
+
+export { TRIP_UPDATES_URL, VEHICLE_POSITIONS_URL, GTFS_STATIC_URL, SERVICE_ALERTS_URL };

@@ -145,6 +145,37 @@ export default function Home() {
         <NextTrainWidget movements={data.movements} />
       )}
 
+      {/* Service Alerts Banner */}
+      {data?.alerts && data.alerts.length > 0 && (
+        <div className="px-4 pt-2">
+          <div className="flex items-start gap-2 px-4 py-3 bg-orange-500/10 border border-orange-500/20 rounded-xl">
+            <span className="text-lg mt-0.5">⚠️</span>
+            <div className="flex-1 min-w-0">
+              <div className="text-xs uppercase tracking-wider text-orange-400 font-medium mb-1">
+                {data.alerts.length} Active Service Alert{data.alerts.length !== 1 ? "s" : ""} — Corridor
+              </div>
+              <div className="space-y-1">
+                {data.alerts.slice(0, 3).map((a) => (
+                  <div key={a.id} className="text-sm text-orange-200/80 truncate">
+                    <span className="font-medium">{a.header}</span>
+                    {a.cause !== "UNKNOWN_CAUSE" && (
+                      <span className="text-xs text-orange-400/60 ml-2">
+                        ({a.cause.replace(/_/g, " ").toLowerCase()})
+                      </span>
+                    )}
+                  </div>
+                ))}
+                {data.alerts.length > 3 && (
+                  <div className="text-xs text-orange-400/60">
+                    +{data.alerts.length - 3} more alert{data.alerts.length - 3 !== 1 ? "s" : ""}
+                  </div>
+                )}
+              </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {/* Filters */}
       <FilterBar
         filters={filters}
@@ -258,6 +289,7 @@ export default function Home() {
         <MovementDetails
           movement={selectedMovement}
           onClose={handleCloseDetails}
+          alerts={data?.alerts || []}
         />
       )}
     </div>

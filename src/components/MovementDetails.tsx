@@ -1,13 +1,16 @@
 "use client";
 
 import { format } from "date-fns";
-import type { Movement } from "@/lib/types";
+import { useEffect, useState, useRef, useCallback } from "react";
+import type { Movement, ServiceAlert } from "@/lib/types";
 import ConfidenceBadge from "./ConfidenceBadge";
 import { getConsistInfo } from "@/lib/consist-images";
+import { WATCH_POINT } from "@/lib/stations";
 
 interface MovementDetailsProps {
   movement: Movement;
   onClose: () => void;
+  alerts?: ServiceAlert[];
 }
 
 function formatTime(isoString?: string): string {
@@ -32,12 +35,290 @@ function occupancyLabel(status: number): string {
   }
 }
 
+/** Haversine distance in km */
+function haversineKm(lat1: number, lng1: number, lat2: number, lng2: number): number {
+  const R = 6371;
+  const dLat = (lat2 - lat1) * (Math.PI / 180);
+  const dLng = (lng2 - lng1) * (Math.PI / 180);
+  const a =
+    Math.sin(dLat / 2) ** 2 +
+    Math.cos(lat1 * (Math.PI / 180)) *
+    Math.cos(lat2 * (Math.PI / 180)) *
+    Math.sin(dLng / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+/** Format seconds as Xm Ys */
+function formatCountdown(seconds: number): string {
+  if (seconds <= 0) return "Arriving now";
+  if (seconds < 60) return `${Math.round(seconds)}s`;
+  const mins = Math.floor(seconds / 60);
+  const secs = Math.round(seconds % 60);
+  if (mins >= 60) {
+    const hrs = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+    return `${hrs}h ${remainMins}m`;
+  }
+  return `${mins}m ${secs}s`;
+}
+
+/** Cause label to human-friendly + icon */
+function causeInfo(cause: string): { label: string; icon: string } {
+  switch (cause) {
+    case "MAINTENANCE": return { label: "Planned maintenance", icon: "🔧" };
+    case "CONSTRUCTION": return { label: "Construction work", icon: "🏗️" };
+    case "WEATHER": return { label: "Weather conditions", icon: "🌧️" };
+    case "ACCIDENT": return { label: "Accident", icon: "⚠️" };
+    case "TECHNICAL_PROBLEM": return { label: "Technical issue", icon: "⚡" };
+    case "STRIKE": return { label: "Industrial action", icon: "✊" };
+    case "POLICE_ACTIVITY": return { label: "Police activity", icon: "🚔" };
+    case "MEDICAL_EMERGENCY": return { label: "Medical emergency", icon: "🚑" };
+    case "DEMONSTRATION": return { label: "Demonstration", icon: "📢" };
+    case "HOLIDAY": return { label: "Holiday schedule", icon: "📅" };
+    default: return { label: cause.replace(/_/g, " ").toLowerCase(), icon: "ℹ️" };
+  }
+}
+
+function effectLabel(effect: string): string {
+  switch (effect) {
+    case "NO_SERVICE": return "No service";
+    case "REDUCED_SERVICE": return "Reduced service";
+    case "SIGNIFICANT_DELAYS": return "Significant delays";
+    case "MODIFIED_SERVICE": return "Modified service";
+    case "DETOUR": return "Detour in effect";
+    case "ADDITIONAL_SERVICE": return "Additional service";
+    case "STOP_MOVED": return "Stop relocated";
+    default: return effect.replace(/_/g, " ").toLowerCase();
+  }
+}
+
+// ─── Mini Map Component (dynamic Leaflet) ───────────────────────────────────
+
+function MiniMap({ lat, lng }: { lat: number; lng: number }) {
+  const mapRef = useRef<HTMLDivElement>(null);
+  const mapInstanceRef = useRef<unknown>(null);
+  const markerRef = useRef<unknown>(null);
+
+  useEffect(() => {
+    if (!mapRef.current) return;
+
+    let cancelled = false;
+
+    (async () => {
+      const L = (await import("leaflet")).default;
+
+      if (cancelled || !mapRef.current) return;
+
+      // Don't recreate if already initialized
+      if (mapInstanceRef.current) {
+        // Just update marker position
+        const map = mapInstanceRef.current as import("leaflet").Map;
+        const marker = markerRef.current as import("leaflet").Marker;
+        map.setView([lat, lng], map.getZoom());
+        marker.setLatLng([lat, lng]);
+        return;
+      }
+
+      const map = L.map(mapRef.current, {
+        center: [lat, lng],
+        zoom: 14,
+        zoomControl: false,
+        attributionControl: false,
+        dragging: true,
+        scrollWheelZoom: false,
+      });
+
+      L.tileLayer("https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png", {
+        maxZoom: 19,
+      }).addTo(map);
+
+      // Watch point marker
+      L.circleMarker([WATCH_POINT.lat, WATCH_POINT.lng], {
+        radius: 5,
+        color: "#f59e0b",
+        fillColor: "#f59e0b",
+        fillOpacity: 0.4,
+        weight: 1,
+      }).addTo(map).bindTooltip("Watch point", { permanent: false, direction: "top" });
+
+      // Train position — pulsing dot
+      const trainIcon = L.divIcon({
+        className: "train-live-dot",
+        html: `<div style="position:relative;width:16px;height:16px;">
+          <div style="position:absolute;inset:0;border-radius:50%;background:#3b82f6;opacity:0.3;animation:pulse-ring 1.5s ease-out infinite;"></div>
+          <div style="position:absolute;inset:3px;border-radius:50%;background:#3b82f6;border:2px solid #fff;"></div>
+        </div>`,
+        iconSize: [16, 16],
+        iconAnchor: [8, 8],
+      });
+
+      const marker = L.marker([lat, lng], { icon: trainIcon }).addTo(map);
+      marker.bindTooltip("Train position", { permanent: false, direction: "top" });
+
+      // Draw line from train to watch point
+      L.polyline(
+        [[lat, lng], [WATCH_POINT.lat, WATCH_POINT.lng]],
+        { color: "#6366f1", weight: 2, dashArray: "6,4", opacity: 0.6 }
+      ).addTo(map);
+
+      // Fit to show both points
+      const bounds = L.latLngBounds([
+        [lat, lng],
+        [WATCH_POINT.lat, WATCH_POINT.lng],
+      ]);
+      map.fitBounds(bounds, { padding: [30, 30], maxZoom: 15 });
+
+      mapInstanceRef.current = map;
+      markerRef.current = marker;
+    })();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [lat, lng]);
+
+  // Cleanup on unmount
+  useEffect(() => {
+    return () => {
+      if (mapInstanceRef.current) {
+        (mapInstanceRef.current as import("leaflet").Map).remove();
+        mapInstanceRef.current = null;
+        markerRef.current = null;
+      }
+    };
+  }, []);
+
+  return (
+    <div
+      ref={mapRef}
+      className="w-full h-48 rounded-lg overflow-hidden border border-[var(--color-border)]"
+      style={{ zIndex: 0 }}
+    />
+  );
+}
+
+// ─── ETA Countdown Hook ─────────────────────────────────────────────────────
+
+function useETACountdown(movement: Movement) {
+  const [countdown, setCountdown] = useState<string | null>(null);
+  const [distanceKm, setDistanceKm] = useState<number | null>(null);
+
+  const compute = useCallback(() => {
+    const vp = movement.vehiclePosition;
+    if (!vp) {
+      setCountdown(null);
+      setDistanceKm(null);
+      return;
+    }
+
+    const dist = haversineKm(vp.lat, vp.lng, WATCH_POINT.lat, WATCH_POINT.lng);
+    setDistanceKm(Math.round(dist * 100) / 100);
+
+    // Method 1: Use speed from vehicle data or estimated speed
+    const speedKmh = vp.estimatedSpeedKmh || (vp.speed ? vp.speed * 3.6 : 0);
+
+    if (speedKmh > 5 && dist > 0.05) {
+      // ETA from speed
+      const etaSeconds = (dist / speedKmh) * 3600;
+      setCountdown(formatCountdown(etaSeconds));
+      return;
+    }
+
+    // Method 2: Use scheduled/estimated stop times
+    // Find the next corridor stop time
+    const wpTime = getEstimatedWatchPointTime(movement);
+    if (wpTime) {
+      const now = Date.now();
+      const diffSec = (wpTime - now) / 1000;
+      if (diffSec > 0) {
+        setCountdown(formatCountdown(diffSec));
+        return;
+      } else if (diffSec > -120) {
+        setCountdown("Passing now");
+        return;
+      }
+    }
+
+    // If stopped or very slow and close
+    if (dist < 0.1) {
+      setCountdown("At watch point");
+    } else {
+      setCountdown(null);
+    }
+  }, [movement]);
+
+  useEffect(() => {
+    compute();
+    const interval = setInterval(compute, 1000);
+    return () => clearInterval(interval);
+  }, [compute]);
+
+  return { countdown, distanceKm };
+}
+
+/**
+ * Estimate the time the train will pass the watch point based on
+ * scheduled/estimated times at corridor stops.
+ */
+function getEstimatedWatchPointTime(movement: Movement): number | null {
+  // Watch point is between Cardiff and Kotara
+  const cardiffTime = movement.cardiffCall
+    ? new Date(
+        movement.cardiffCall.estimatedDeparture ||
+        movement.cardiffCall.scheduledDeparture ||
+        movement.cardiffCall.estimatedArrival ||
+        movement.cardiffCall.scheduledArrival || ""
+      ).getTime()
+    : NaN;
+
+  const kotaraTime = movement.kotaraCall
+    ? new Date(
+        movement.kotaraCall.estimatedArrival ||
+        movement.kotaraCall.scheduledArrival ||
+        movement.kotaraCall.estimatedDeparture ||
+        movement.kotaraCall.scheduledDeparture || ""
+      ).getTime()
+    : NaN;
+
+  if (movement.direction === "towards-newcastle") {
+    // Cardiff → watch → Kotara
+    // Watch point is ~70% of the way between Cardiff and Kotara
+    if (!isNaN(cardiffTime) && !isNaN(kotaraTime)) {
+      return cardiffTime + (kotaraTime - cardiffTime) * 0.7;
+    }
+    if (!isNaN(kotaraTime)) return kotaraTime - 60000; // ~1 min before Kotara
+    if (!isNaN(cardiffTime)) return cardiffTime + 120000; // ~2 min after Cardiff
+  } else {
+    // Kotara → watch → Cardiff
+    // Watch point is ~30% of the way from Kotara to Cardiff
+    if (!isNaN(kotaraTime) && !isNaN(cardiffTime)) {
+      return kotaraTime + (cardiffTime - kotaraTime) * 0.3;
+    }
+    if (!isNaN(cardiffTime)) return cardiffTime - 60000;
+    if (!isNaN(kotaraTime)) return kotaraTime + 60000;
+  }
+
+  return null;
+}
+
+// ─── Main Component ─────────────────────────────────────────────────────────
+
 export default function MovementDetails({
   movement,
   onClose,
+  alerts = [],
 }: MovementDetailsProps) {
   const consistInfo = getConsistInfo(movement.consistType);
   const vp = movement.vehiclePosition;
+  const { countdown, distanceKm } = useETACountdown(movement);
+
+  // Match alerts to this movement
+  const movementAlerts = alerts.filter((a) => {
+    if (!a.isActive) return false;
+    if (movement.tripId && a.tripIds.includes(movement.tripId)) return true;
+    if (movement.routeId && a.routeIds.some((rid) => movement.routeId!.startsWith(rid.split("_")[0]))) return true;
+    return false;
+  });
 
   return (
     <div
@@ -77,8 +358,22 @@ export default function MovementDetails({
             </div>
           </div>
 
+          {/* ETA badge */}
+          {countdown && (
+            <div className="hidden md:flex items-center gap-2 px-3 py-2 bg-indigo-500/15 border border-indigo-500/30 rounded-xl">
+              <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+              <div>
+                <div className="text-[10px] text-indigo-300 uppercase tracking-wider">ETA to watch point</div>
+                <div className="text-lg font-bold text-indigo-300 tabular-nums">{countdown}</div>
+              </div>
+              {distanceKm != null && (
+                <div className="text-xs text-indigo-400/70 ml-2">{distanceKm} km</div>
+              )}
+            </div>
+          )}
+
           {/* Origin → Destination */}
-          <div className="hidden md:flex items-center gap-3 px-4 py-2 bg-[var(--color-surface-2)] rounded-xl">
+          <div className="hidden lg:flex items-center gap-3 px-4 py-2 bg-[var(--color-surface-2)] rounded-xl">
             <div className="text-right">
               <div className="text-[10px] text-[var(--color-text-muted)]">From</div>
               <div className="text-sm font-semibold">{movement.origin}</div>
@@ -103,6 +398,20 @@ export default function MovementDetails({
           </button>
         </div>
 
+        {/* ETA badge (mobile) */}
+        {countdown && (
+          <div className="md:hidden flex items-center gap-2 mx-6 mt-4 px-3 py-2 bg-indigo-500/15 border border-indigo-500/30 rounded-xl">
+            <div className="w-2 h-2 rounded-full bg-indigo-400 animate-pulse" />
+            <div>
+              <div className="text-[10px] text-indigo-300 uppercase tracking-wider">ETA to watch point</div>
+              <div className="text-lg font-bold text-indigo-300 tabular-nums">{countdown}</div>
+            </div>
+            {distanceKm != null && (
+              <div className="text-xs text-indigo-400/70 ml-2">{distanceKm} km</div>
+            )}
+          </div>
+        )}
+
         {/* Two-column body */}
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-0 lg:gap-0">
           {/* ── Left Column ─────────────────────────────── */}
@@ -115,6 +424,54 @@ export default function MovementDetails({
                 </div>
                 <div className="text-xs text-amber-400/70 mt-0.5">
                   Scheduled: {formatTime(movement.scheduledTime)} → Estimated: {formatTime(movement.estimatedTime)}
+                </div>
+              </div>
+            )}
+
+            {/* Service Alerts / Delay Reasons */}
+            {movementAlerts.length > 0 && (
+              <div>
+                <h3 className="text-xs uppercase tracking-wider text-orange-400 font-medium mb-2">
+                  Service Alerts & Delay Causes
+                </h3>
+                <div className="space-y-2">
+                  {movementAlerts.map((alert) => {
+                    const ci = causeInfo(alert.cause);
+                    return (
+                      <div
+                        key={alert.id}
+                        className="px-4 py-3 bg-orange-500/10 border border-orange-500/20 rounded-xl"
+                      >
+                        <div className="flex items-center gap-2 mb-1">
+                          <span>{ci.icon}</span>
+                          <span className="text-sm font-medium text-orange-300">
+                            {ci.label}
+                          </span>
+                          <span className="text-[10px] px-1.5 py-0.5 rounded bg-orange-500/20 text-orange-400">
+                            {effectLabel(alert.effect)}
+                          </span>
+                        </div>
+                        <div className="text-sm text-orange-200/80">{alert.header}</div>
+                        {alert.description && alert.description !== alert.header && (
+                          <div className="text-xs text-orange-200/60 mt-1 line-clamp-3">
+                            {alert.description}
+                          </div>
+                        )}
+                        {alert.activePeriods.length > 0 && (
+                          <div className="text-[10px] text-orange-400/60 mt-1.5">
+                            {alert.activePeriods.map((p, i) => (
+                              <span key={i}>
+                                {format(new Date(p.start), "dd MMM HH:mm")}
+                                {" → "}
+                                {p.end ? format(new Date(p.end), "dd MMM HH:mm") : "ongoing"}
+                                {i < alert.activePeriods.length - 1 ? " · " : ""}
+                              </span>
+                            ))}
+                          </div>
+                        )}
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
             )}
@@ -230,7 +587,7 @@ export default function MovementDetails({
           {/* ── Right Column ────────────────────────────── */}
           <div className="px-6 py-5 space-y-5">
             {/* Origin → Destination (mobile only) */}
-            <div className="md:hidden flex items-center gap-3 px-4 py-3 bg-[var(--color-surface-2)] rounded-xl">
+            <div className="lg:hidden flex items-center gap-3 px-4 py-3 bg-[var(--color-surface-2)] rounded-xl">
               <div className="text-center flex-1">
                 <div className="text-xs text-[var(--color-text-muted)]">From</div>
                 <div className="text-sm font-semibold">{movement.origin}</div>
@@ -243,6 +600,46 @@ export default function MovementDetails({
                 <div className="text-sm font-semibold">{movement.destination}</div>
               </div>
             </div>
+
+            {/* ── Live Position Map ──────────────────────── */}
+            {vp && (
+              <div>
+                <h3 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-medium mb-3">
+                  Live Position
+                </h3>
+                <MiniMap lat={vp.lat} lng={vp.lng} />
+                <div className="grid grid-cols-2 gap-3 mt-3 px-3 py-3 bg-[var(--color-surface-2)] rounded-lg">
+                  <DetailField label="Latitude" value={vp.lat.toFixed(6)} />
+                  <DetailField label="Longitude" value={vp.lng.toFixed(6)} />
+                  {distanceKm != null && (
+                    <DetailField label="Distance to Watch" value={`${distanceKm} km`} />
+                  )}
+                  {vp.estimatedSpeedKmh != null && (
+                    <DetailField label="Est. Speed" value={`${vp.estimatedSpeedKmh} km/h`} />
+                  )}
+                  {vp.bearing != null && vp.bearing !== 0 && (
+                    <DetailField label="Bearing" value={`${Math.round(vp.bearing)}°`} />
+                  )}
+                  <DetailField label="Position Time" value={formatDateTime(vp.timestamp)} />
+                </div>
+              </div>
+            )}
+
+            {/* ETA panel (when no live position, use schedule-based) */}
+            {!vp && countdown && (
+              <div>
+                <h3 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-medium mb-3">
+                  Estimated Arrival
+                </h3>
+                <div className="flex items-center gap-3 px-4 py-3 bg-indigo-500/10 border border-indigo-500/20 rounded-xl">
+                  <div className="w-3 h-3 rounded-full bg-indigo-400 animate-pulse" />
+                  <div>
+                    <div className="text-xs text-indigo-300">ETA to watch point (schedule-based)</div>
+                    <div className="text-xl font-bold text-indigo-300 tabular-nums">{countdown}</div>
+                  </div>
+                </div>
+              </div>
+            )}
 
             {/* Corridor Stops */}
             <div>
@@ -285,45 +682,6 @@ export default function MovementDetails({
                 ))}
               </div>
             </div>
-
-            {/* Live Vehicle Position */}
-            {vp && (
-              <div>
-                <h3 className="text-xs uppercase tracking-wider text-[var(--color-text-muted)] font-medium mb-3">
-                  Live Position
-                </h3>
-                <div className="grid grid-cols-2 gap-3 px-3 py-3 bg-[var(--color-surface-2)] rounded-lg">
-                  <DetailField
-                    label="Latitude"
-                    value={vp.lat.toFixed(6)}
-                  />
-                  <DetailField
-                    label="Longitude"
-                    value={vp.lng.toFixed(6)}
-                  />
-                  {vp.estimatedSpeedKmh != null && (
-                    <DetailField
-                      label="Est. Speed"
-                      value={`${vp.estimatedSpeedKmh} km/h`}
-                    />
-                  )}
-                  {vp.bearing != null && vp.bearing !== 0 && (
-                    <DetailField
-                      label="Bearing"
-                      value={`${Math.round(vp.bearing)}°`}
-                    />
-                  )}
-                  <DetailField
-                    label="Position Time"
-                    value={formatDateTime(vp.timestamp)}
-                  />
-                  <DetailField
-                    label="Source"
-                    value={vp.source}
-                  />
-                </div>
-              </div>
-            )}
           </div>
         </div>
       </div>

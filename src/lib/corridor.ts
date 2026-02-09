@@ -11,12 +11,18 @@ import {
   processVehiclePositions,
   mergeRealtimeData,
 } from "./tfnsw/gtfs-realtime";
+import {
+  processServiceAlerts,
+  getCorridorAlerts,
+  getAlertsForMovement,
+} from "./tfnsw/service-alerts";
 import { getFreightMovements } from "./freight/artc-client";
 import type {
   Movement,
   MovementFilters,
   MovementsResponse,
   FeedStatus,
+  ServiceAlert,
 } from "./types";
 import { addHours, endOfDay, startOfDay } from "date-fns";
 
@@ -130,7 +136,26 @@ export async function getCorridorMovements(
     recordCount: scheduledMovements.length,
   });
 
-  // 2. Try to get realtime updates
+  // 2. Fetch service alerts (non-blocking)
+  let allAlerts: ServiceAlert[] = [];
+  let corridorAlerts: ServiceAlert[] = [];
+  try {
+    const alertsResult = await processServiceAlerts();
+    allAlerts = alertsResult.alerts;
+    corridorAlerts = getCorridorAlerts(allAlerts);
+    feeds.push(alertsResult.feedStatus);
+  } catch {
+    // Non-critical — alerts failing shouldn't block movements
+    feeds.push({
+      name: "GTFS-RT Service Alerts",
+      source: "tfnsw-gtfs-static",
+      status: "offline",
+      lastFetched: now.toISOString(),
+      error: "Service alerts unavailable",
+    });
+  }
+
+  // 3. Try to get realtime updates
   let movements: Movement[];
   try {
     const [tripUpdatesResult, vehiclePositionsResult] = await Promise.all([
@@ -204,18 +229,37 @@ export async function getCorridorMovements(
     }
   }
 
-  // 5. Mark completed movements
+  // 5. Attach service alerts to individual movements
+  if (allAlerts.length > 0) {
+    movements = movements.map((m) => {
+      const matchingAlerts = getAlertsForMovement(allAlerts, m.tripId, m.routeId);
+      if (matchingAlerts.length > 0) {
+        const alertDisruptions = matchingAlerts.map((a) => {
+          const causeLabel = a.cause !== "UNKNOWN_CAUSE" ? ` (${a.cause.replace(/_/g, " ").toLowerCase()})` : "";
+          return `${a.header}${causeLabel}`;
+        });
+        return {
+          ...m,
+          disruptions: [...m.disruptions, ...alertDisruptions],
+        };
+      }
+      return m;
+    });
+  }
+
+  // 6. Mark completed movements
   movements = markCompletedMovements(movements, now);
 
-  // 6. Apply filters
+  // 7. Apply filters
   movements = applyFilters(movements, filters);
 
-  // 7. Sort
+  // 8. Sort
   movements = sortMovements(movements);
 
   return {
     movements,
     feeds,
+    alerts: corridorAlerts,
     filters,
     timestamp: now.toISOString(),
     fallbackActive,
