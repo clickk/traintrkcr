@@ -335,7 +335,16 @@ function buildMovementsFromGTFS(
     if (trip.headsign.toLowerCase().includes("empty train")) continue;
 
     // Determine consist type from route
-    const consistType = trip.routeId.startsWith("HUN") ? "Endeavour" : "Oscar";
+    // CCN line now primarily uses Waratahs (A/B sets); Oscars still run but less common
+    // HUN (Hunter) line uses Endeavour diesel railcars
+    // Route suffixes: _1a/_1b/_1c = towards Newcastle, _2a/_2b = towards Sydney
+    let consistType: string;
+    if (trip.routeId.startsWith("HUN")) {
+      consistType = "Endeavour";
+    } else {
+      // Default to Waratah for CCN — most common consist on the Newcastle line now
+      consistType = "Waratah";
+    }
 
     // Determine origin/destination
     const origin = direction === "towards-newcastle" ? "Central" : "Newcastle Interchange";

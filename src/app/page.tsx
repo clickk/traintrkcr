@@ -78,9 +78,6 @@ export default function Home() {
             </svg>
             <div>
               <h1 className="text-lg font-bold tracking-tight">TRAINTRCKR</h1>
-              <p className="text-[10px] text-[var(--color-text-muted)] uppercase tracking-widest">
-                Cardiff · Kotara Corridor
-              </p>
             </div>
           </div>
         </div>

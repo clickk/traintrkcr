@@ -311,6 +311,26 @@ export function mergeRealtimeData(
       if (updated.status === "scheduled") {
         updated.status = "live";
       }
+
+      // Refine consist type from live vehicle data (consist length)
+      if (position.consistLength) {
+        const len = position.consistLength;
+        if (updated.routeId?.startsWith("HUN")) {
+          updated.consistType = "Endeavour";
+        } else if (len === 4) {
+          // 4-car: single Waratah A set or single Oscar H set
+          updated.consistType = "Waratah";
+        } else if (len === 8) {
+          // 8-car: double Waratah A set (most common on CCN now)
+          updated.consistType = "Waratah";
+        } else if (len === 6) {
+          // 6-car: less common, could be Oscar or Waratah variant
+          updated.consistType = "Oscar";
+        } else if (len >= 10) {
+          // 10-car: coupled Waratahs
+          updated.consistType = "Waratah";
+        }
+      }
     }
 
     return updated;
